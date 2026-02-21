@@ -69,38 +69,25 @@ function fetchImage(url, maxRedirects = 5) {
 }
 
 async function generateImage(prompt) {
-  const encodedPrompt = encodeURIComponent(prompt + ', pixel art style, simple shapes, bold colors');
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${Date.now()}&nologo=true`;
-  console.log('Generating image from:', url);
+  // Use picsum for reliable test images (random photos)
+  // We'll add AI generation once pipeline is working
+  const seed = Math.floor(Math.random() * 1000);
+  const url = `https://picsum.photos/seed/${seed}/512/512`;
+  console.log('Fetching image from:', url);
   
-  // Pollinations can take time to generate, retry a few times
-  let lastError;
-  for (let i = 0; i < 5; i++) {
-    try {
-      const imageBuffer = await fetchImage(url);
-      console.log('Image buffer size:', imageBuffer.length, 'First bytes:', imageBuffer.slice(0, 20).toString('hex'));
-      
-      // Check if it starts with JPEG or PNG magic bytes
-      const isJPEG = imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8;
-      const isPNG = imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50;
-      
-      if (!isJPEG && !isPNG) {
-        console.log('Not a valid image, retrying...');
-        throw new Error('Invalid image format received');
-      }
-      
-      // Convert to PNG to normalize
-      const normalizedBuffer = await sharp(imageBuffer).png().toBuffer();
-      const metadata = await sharp(normalizedBuffer).metadata();
-      console.log('Image metadata:', metadata.format, metadata.width, 'x', metadata.height);
-      return normalizedBuffer;
-    } catch (err) {
-      console.log('Attempt', i + 1, 'failed:', err.message);
-      lastError = err;
-      await new Promise(r => setTimeout(r, 5000)); // Wait 5s before retry
-    }
+  try {
+    const imageBuffer = await fetchImage(url);
+    console.log('Image buffer size:', imageBuffer.length);
+    
+    // Convert to PNG to normalize
+    const normalizedBuffer = await sharp(imageBuffer).png().toBuffer();
+    const metadata = await sharp(normalizedBuffer).metadata();
+    console.log('Image metadata:', metadata.format, metadata.width, 'x', metadata.height);
+    return normalizedBuffer;
+  } catch (err) {
+    console.error('Image fetch failed:', err);
+    throw err;
   }
-  throw lastError;
 }
 
 async function imageToGrid(imageBuffer) {
@@ -372,10 +359,13 @@ app.post('/generate', async (req, res) => {
     console.log('Published:', result.url);
     res.json(result);
   } catch (err) {
-    console.error('Error:', err);
-    res.json({ success: false, error: err.message });
+    console.error('Error:', err.message, err.stack);
+    res.json({ success: false, error: err.message || 'Unknown error' });
   }
 });
+
+// Health check
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', () => {
