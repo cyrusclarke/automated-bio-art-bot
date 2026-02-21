@@ -3,6 +3,9 @@ const puppeteer = require('puppeteer-core');
 const sharp = require('sharp');
 const https = require('https');
 const http = require('http');
+const OpenAI = require('openai');
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
 app.use(express.json());
@@ -64,22 +67,26 @@ function fetchImage(url, maxRedirects = 5) {
 }
 
 async function generateImage(prompt) {
-  const encodedPrompt = encodeURIComponent(prompt + ', pixel art, simple, bold colors');
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${Date.now()}&nologo=true`;
-  console.log('Fetching AI image:', url);
+  console.log('Generating with DALL-E:', prompt);
   
-  for (let i = 0; i < 3; i++) {
-    try {
-      const buf = await fetchImage(url);
-      if (buf[0] === 0xFF || buf[0] === 0x89) {
-        return await sharp(buf).png().toBuffer();
-      }
-    } catch (e) { console.log('Retry', i+1, e.message); }
-    await new Promise(r => setTimeout(r, 3000));
+  try {
+    const response = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: prompt + ". Style: bold colors, simple shapes, suitable for pixel art conversion, high contrast",
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+    });
+    
+    const imageUrl = response.data[0].url;
+    console.log('DALL-E URL:', imageUrl);
+    
+    const buf = await fetchImage(imageUrl);
+    return await sharp(buf).png().toBuffer();
+  } catch (err) {
+    console.error('DALL-E error:', err.message);
+    throw err;
   }
-  // Fallback to picsum
-  const buf = await fetchImage(`https://picsum.photos/512/512?random=${Date.now()}`);
-  return await sharp(buf).png().toBuffer();
 }
 
 async function imageToGrid(imageBuffer) {
