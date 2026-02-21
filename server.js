@@ -15,7 +15,7 @@ const GRID_COLS = 48;
 const GRID_ROWS = 32;
 
 const PALETTE = [
-  { name: 'erase', hex: '#ffffff', rgb: [255, 255, 255] },
+  { name: 'empty', hex: '#000000', rgb: [0, 0, 0] },  // Black background (no bacteria)
   { name: 'sfGFP', hex: '#1fea5c', rgb: [31, 234, 92] },
   { name: 'mRFP1', hex: '#8f2438', rgb: [143, 36, 56] },
   { name: 'mKO2', hex: '#b39223', rgb: [179, 146, 35] },
@@ -69,32 +69,36 @@ function fetchImage(url, maxRedirects = 5) {
 async function generateImage(prompt) {
   console.log('Generating with DALL-E:', prompt);
   
-  // Our palette colors described for DALL-E
+  // Our palette colors - these are fluorescent bacteria colors
   const colorGuide = `
-Use ONLY these specific colors:
-- Bright neon green (#1fea5c)
-- Dark maroon red (#8f2438) 
-- Golden ochre (#b39223)
-- Lime yellow-green (#6ad500)
-- Medium blue (#3867ae)
-- Forest green (#409945)
-- Teal (#1c978d)
-- Cyan/turquoise (#13AEA7)
-- Royal blue (#1C58C6)
-- Emerald green (#009349)
-- Coral red (#b9474b)
-- White background`;
+ONLY use these exact colors (fluorescent bacteria palette):
+- Bright green (#1fea5c) - sfGFP
+- Dark red/maroon (#8f2438) - mRFP1
+- Golden orange (#b39223) - mKO2
+- Lime/yellow-green (#6ad500) - Venus
+- Blue (#3867ae) - Azurite
+- Forest green (#409945) - mClover3
+- Teal (#1c978d) - mJuniper
+- Cyan (#13AEA7) - mTurquoise2
+- Royal blue (#1C58C6) - Electra2
+- Emerald (#009349) - mWasabi
+- Coral red (#b9474b) - mScarlet_I
 
-  const enhancedPrompt = `Simple pixel art of: ${prompt}
+NO white, NO gray, NO pink, NO purple, NO brown (except maroon). Only the colors listed above.`;
 
-CRITICAL: 
-- NO frame, NO border, NO decorative edges
-- Subject fills entire canvas edge to edge
-- Transparent or solid color background ONLY
-- Like a sprite from an old video game
+  const enhancedPrompt = `Pixel art sprite of: ${prompt}
 
-Style: 16x16 pixel art scaled up, flat colors, no gradients, no shading, chunky blocky pixels
-${colorGuide}`;
+CRITICAL REQUIREMENTS:
+- Pure BLACK background (#000000) - this is essential
+- NO frame, NO border, NO outline around the edges
+- Subject only, floating on black void
+- Use ONLY the fluorescent colors listed below - no other colors
+- Simple iconic design, like a 16x16 game sprite
+- Flat colors, no gradients, no shading, no anti-aliasing
+
+${colorGuide}
+
+Style: Retro 8-bit pixel art, chunky pixels, minimal detail, bold saturated colors on pure black`;
 
   try {
     const response = await openai.images.generate({
@@ -117,13 +121,12 @@ ${colorGuide}`;
 }
 
 async function imageToGrid(imageBuffer) {
-  // First resize with high quality, then quantize
+  // Resize with high quality
   const { data, info } = await sharp(imageBuffer)
     .resize(GRID_COLS, GRID_ROWS, { 
       fit: 'fill',
-      kernel: 'lanczos3'  // High quality downscaling
+      kernel: 'lanczos3'
     })
-    .median(1)  // Slight smoothing to reduce noise
     .raw()
     .toBuffer({ resolveWithObject: true });
   
@@ -134,11 +137,20 @@ async function imageToGrid(imageBuffer) {
       const idx = (y * GRID_COLS + x) * info.channels;
       const r = data[idx], g = data[idx+1], b = data[idx+2];
       
-      // If very light, make it white (background)
-      if (r > 240 && g > 240 && b > 240) {
-        row.push(0); // erase/white
+      // Dark pixels = empty (black background)
+      const brightness = (r + g + b) / 3;
+      if (brightness < 30) {
+        row.push(0); // empty/black
       } else {
-        row.push(findClosestColor(r, g, b));
+        // Find closest color from palette (skip index 0 which is black)
+        let minDist = Infinity;
+        let closest = 0;
+        for (let i = 1; i < PALETTE.length; i++) {
+          const [pr, pg, pb] = PALETTE[i].rgb;
+          const dist = colorDistance(r, g, b, pr, pg, pb);
+          if (dist < minDist) { minDist = dist; closest = i; }
+        }
+        row.push(closest);
       }
     }
     grid.push(row);
@@ -148,11 +160,16 @@ async function imageToGrid(imageBuffer) {
 
 function gridToSvg(grid) {
   const cellSize = 10;
+  // Black background, only draw colored cells
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${GRID_COLS*cellSize}" height="${GRID_ROWS*cellSize}">`;
+  svg += `<rect width="100%" height="100%" fill="#000000"/>`; // Black background
   for (let y = 0; y < GRID_ROWS; y++) {
     for (let x = 0; x < GRID_COLS; x++) {
-      const color = PALETTE[grid[y][x]].hex;
-      svg += `<rect x="${x*cellSize}" y="${y*cellSize}" width="${cellSize}" height="${cellSize}" fill="${color}"/>`;
+      const colorIdx = grid[y][x];
+      if (colorIdx > 0) { // Only draw non-empty cells
+        const color = PALETTE[colorIdx].hex;
+        svg += `<rect x="${x*cellSize}" y="${y*cellSize}" width="${cellSize}" height="${cellSize}" fill="${color}"/>`;
+      }
     }
   }
   svg += '</svg>';
@@ -285,7 +302,7 @@ const html = `<!DOCTYPE html>
     button:hover { background: #00b894; }
     button:disabled { background: #555; }
     #preview { margin: 20px 0; text-align: center; }
-    #preview svg { max-width: 100%; border: 1px solid #333; }
+    #preview svg { max-width: 100%; border: 1px solid #333; background: #000; }
     #status { padding: 15px; border-radius: 8px; margin: 10px 0; }
     .success { background: #0a3d2e; border: 1px solid #00d4aa; }
     .error { background: #3d0a0a; border: 1px solid #d44; }
