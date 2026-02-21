@@ -85,18 +85,16 @@ Use ONLY these specific colors:
 - Coral red (#b9474b)
 - White background`;
 
-  const enhancedPrompt = `Create a very simple, minimalist pixel art icon of: ${prompt}
+  const enhancedPrompt = `Simple pixel art of: ${prompt}
 
-Requirements:
-- Centered subject filling most of the frame
-- Pure white (#ffffff) background, NO shadows or gradients
-- Extremely simple shapes, like a 16x16 pixel sprite scaled up
-- Flat colors only, no shading or anti-aliasing
-- Bold black outlines optional
-- Maximum 4-5 colors total
-${colorGuide}
+CRITICAL: 
+- NO frame, NO border, NO decorative edges
+- Subject fills entire canvas edge to edge
+- Transparent or solid color background ONLY
+- Like a sprite from an old video game
 
-Style: 8-bit retro pixel art, NES-era simplicity, chunky pixels, iconic and immediately recognizable`;
+Style: 16x16 pixel art scaled up, flat colors, no gradients, no shading, chunky blocky pixels
+${colorGuide}`;
 
   try {
     const response = await openai.images.generate({
@@ -162,19 +160,37 @@ function gridToSvg(grid) {
 }
 
 async function drawAndPublish(grid, title) {
+  console.log('Starting browser...');
   const browser = await puppeteer.launch({
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox', 
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor'
+    ]
   });
   
   const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 800 });
+  
   try {
-    await page.goto('https://ginkgoartworks.com/', { waitUntil: 'networkidle0', timeout: 60000 });
+    console.log('Navigating to ginkgoartworks.com...');
+    await page.goto('https://ginkgoartworks.com/', { waitUntil: 'networkidle2', timeout: 60000 });
     await new Promise(r => setTimeout(r, 3000));
     
+    console.log('Finding grid cells...');
     const cells = await page.$$('#grid-container input[type="checkbox"]');
+    console.log('Found', cells.length, 'cells');
     
+    if (cells.length === 0) {
+      throw new Error('No grid cells found - page may not have loaded correctly');
+    }
+    
+    // Draw each color
     for (let colorIdx = 1; colorIdx < PALETTE.length; colorIdx++) {
       const pixels = [];
       for (let y = 0; y < GRID_ROWS; y++) {
@@ -184,48 +200,68 @@ async function drawAndPublish(grid, title) {
       }
       if (pixels.length === 0) continue;
       
+      console.log('Drawing color', colorIdx, PALETTE[colorIdx].name, '-', pixels.length, 'pixels');
+      
       const swatches = await page.$$('div[role="radio"]');
       if (swatches[colorIdx]) {
         await swatches[colorIdx].click();
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 100));
       }
+      
       for (const idx of pixels) {
-        if (cells[idx]) await cells[idx].click();
+        if (cells[idx]) {
+          await cells[idx].click();
+          await new Promise(r => setTimeout(r, 5)); // Small delay between clicks
+        }
       }
     }
     
+    console.log('Drawing complete, clicking Publish...');
     await new Promise(r => setTimeout(r, 500));
-    let btns = await page.$$('button');
-    for (const btn of btns) {
-      const txt = await btn.evaluate(el => el.textContent);
-      if (txt.includes('Publish')) { await btn.click(); break; }
-    }
     
-    await new Promise(r => setTimeout(r, 1500));
+    // Click first Publish button
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const pub = btns.find(b => b.textContent.includes('Publish'));
+      if (pub) pub.click();
+    });
+    
+    await new Promise(r => setTimeout(r, 2000));
+    
+    // Enter title
+    console.log('Entering title:', title);
     const titleInput = await page.$('input[type="text"]');
-    if (titleInput && title) {
+    if (titleInput) {
       await titleInput.click({ clickCount: 3 });
-      await titleInput.type(title);
+      await page.keyboard.type(title || 'Untitled');
     }
     
     await new Promise(r => setTimeout(r, 500));
-    btns = await page.$$('button');
-    for (const btn of btns) {
-      const txt = await btn.evaluate(el => el.textContent);
-      if (txt.includes('Publish')) { await btn.click(); break; }
-    }
     
-    await new Promise(r => setTimeout(r, 3000));
-    const links = await page.$$('a');
-    let url = null;
-    for (const link of links) {
-      const href = await link.evaluate(el => el.href);
-      if (href && href.includes('opentrons-art')) { url = href; break; }
-    }
+    // Click modal Publish button
+    console.log('Clicking modal Publish...');
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const pubs = btns.filter(b => b.textContent.includes('Publish'));
+      if (pubs.length > 1) pubs[pubs.length - 1].click();
+      else if (pubs.length === 1) pubs[0].click();
+    });
     
+    await new Promise(r => setTimeout(r, 4000));
+    
+    // Get URL
+    console.log('Looking for gallery URL...');
+    const url = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('a'));
+      const artLink = links.find(l => l.href && l.href.includes('opentrons-art'));
+      return artLink ? artLink.href : null;
+    });
+    
+    console.log('Published URL:', url);
     await browser.close();
     return { success: true, url };
   } catch (err) {
+    console.error('Publish error:', err.message);
     await browser.close();
     throw err;
   }
