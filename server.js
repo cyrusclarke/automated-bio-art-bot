@@ -69,10 +69,39 @@ function fetchImage(url, maxRedirects = 5) {
 async function generateImage(prompt) {
   console.log('Generating with DALL-E:', prompt);
   
+  // Our palette colors described for DALL-E
+  const colorGuide = `
+Use ONLY these specific colors:
+- Bright neon green (#1fea5c)
+- Dark maroon red (#8f2438) 
+- Golden ochre (#b39223)
+- Lime yellow-green (#6ad500)
+- Medium blue (#3867ae)
+- Forest green (#409945)
+- Teal (#1c978d)
+- Cyan/turquoise (#13AEA7)
+- Royal blue (#1C58C6)
+- Emerald green (#009349)
+- Coral red (#b9474b)
+- White background`;
+
+  const enhancedPrompt = `Create a very simple, minimalist pixel art icon of: ${prompt}
+
+Requirements:
+- Centered subject filling most of the frame
+- Pure white (#ffffff) background, NO shadows or gradients
+- Extremely simple shapes, like a 16x16 pixel sprite scaled up
+- Flat colors only, no shading or anti-aliasing
+- Bold black outlines optional
+- Maximum 4-5 colors total
+${colorGuide}
+
+Style: 8-bit retro pixel art, NES-era simplicity, chunky pixels, iconic and immediately recognizable`;
+
   try {
     const response = await openai.images.generate({
       model: "dall-e-3",
-      prompt: prompt + ". Style: bold colors, simple shapes, suitable for pixel art conversion, high contrast",
+      prompt: enhancedPrompt,
       n: 1,
       size: "1024x1024",
       quality: "standard",
@@ -90,16 +119,29 @@ async function generateImage(prompt) {
 }
 
 async function imageToGrid(imageBuffer) {
+  // First resize with high quality, then quantize
   const { data, info } = await sharp(imageBuffer)
-    .resize(GRID_COLS, GRID_ROWS, { fit: 'fill' })
-    .raw().toBuffer({ resolveWithObject: true });
+    .resize(GRID_COLS, GRID_ROWS, { 
+      fit: 'fill',
+      kernel: 'lanczos3'  // High quality downscaling
+    })
+    .median(1)  // Slight smoothing to reduce noise
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   
   const grid = [];
   for (let y = 0; y < GRID_ROWS; y++) {
     const row = [];
     for (let x = 0; x < GRID_COLS; x++) {
       const idx = (y * GRID_COLS + x) * info.channels;
-      row.push(findClosestColor(data[idx], data[idx+1], data[idx+2]));
+      const r = data[idx], g = data[idx+1], b = data[idx+2];
+      
+      // If very light, make it white (background)
+      if (r > 240 && g > 240 && b > 240) {
+        row.push(0); // erase/white
+      } else {
+        row.push(findClosestColor(r, g, b));
+      }
     }
     grid.push(row);
   }
