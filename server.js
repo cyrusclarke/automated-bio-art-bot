@@ -69,25 +69,35 @@ function fetchImage(url, maxRedirects = 5) {
 }
 
 async function generateImage(prompt) {
-  const encodedPrompt = encodeURIComponent(prompt + ', pixel art style, simple shapes, bold colors, low detail');
+  const encodedPrompt = encodeURIComponent(prompt + ', pixel art style, simple shapes, bold colors');
   const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${Date.now()}&nologo=true`;
   console.log('Generating image from:', url);
   
   // Pollinations can take time to generate, retry a few times
   let lastError;
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     try {
       const imageBuffer = await fetchImage(url);
-      console.log('Image buffer size:', imageBuffer.length);
+      console.log('Image buffer size:', imageBuffer.length, 'First bytes:', imageBuffer.slice(0, 20).toString('hex'));
       
-      // Validate it's actually an image by trying to get metadata
-      const metadata = await sharp(imageBuffer).metadata();
+      // Check if it starts with JPEG or PNG magic bytes
+      const isJPEG = imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8;
+      const isPNG = imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50;
+      
+      if (!isJPEG && !isPNG) {
+        console.log('Not a valid image, retrying...');
+        throw new Error('Invalid image format received');
+      }
+      
+      // Convert to PNG to normalize
+      const normalizedBuffer = await sharp(imageBuffer).png().toBuffer();
+      const metadata = await sharp(normalizedBuffer).metadata();
       console.log('Image metadata:', metadata.format, metadata.width, 'x', metadata.height);
-      return imageBuffer;
+      return normalizedBuffer;
     } catch (err) {
       console.log('Attempt', i + 1, 'failed:', err.message);
       lastError = err;
-      await new Promise(r => setTimeout(r, 3000)); // Wait 3s before retry
+      await new Promise(r => setTimeout(r, 5000)); // Wait 5s before retry
     }
   }
   throw lastError;
