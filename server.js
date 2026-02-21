@@ -45,12 +45,20 @@ function findClosestColor(r, g, b) {
   return closest;
 }
 
-function fetchImage(url) {
+function fetchImage(url, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) return reject(new Error('Too many redirects'));
     const client = url.startsWith('https') ? https : http;
-    client.get(url, (res) => {
+    client.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+      console.log('Fetch response:', res.statusCode, res.headers['content-type']);
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchImage(res.headers.location).then(resolve).catch(reject);
+        const newUrl = res.headers.location.startsWith('http') 
+          ? res.headers.location 
+          : new URL(res.headers.location, url).href;
+        return fetchImage(newUrl, maxRedirects - 1).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP ${res.statusCode}`));
       }
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
@@ -62,10 +70,27 @@ function fetchImage(url) {
 
 async function generateImage(prompt) {
   const encodedPrompt = encodeURIComponent(prompt + ', pixel art style, simple shapes, bold colors, low detail');
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${Date.now()}`;
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${Date.now()}&nologo=true`;
   console.log('Generating image from:', url);
-  const imageBuffer = await fetchImage(url);
-  return imageBuffer;
+  
+  // Pollinations can take time to generate, retry a few times
+  let lastError;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const imageBuffer = await fetchImage(url);
+      console.log('Image buffer size:', imageBuffer.length);
+      
+      // Validate it's actually an image by trying to get metadata
+      const metadata = await sharp(imageBuffer).metadata();
+      console.log('Image metadata:', metadata.format, metadata.width, 'x', metadata.height);
+      return imageBuffer;
+    } catch (err) {
+      console.log('Attempt', i + 1, 'failed:', err.message);
+      lastError = err;
+      await new Promise(r => setTimeout(r, 3000)); // Wait 3s before retry
+    }
+  }
+  throw lastError;
 }
 
 async function imageToGrid(imageBuffer) {
